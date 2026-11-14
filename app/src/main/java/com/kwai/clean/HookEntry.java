@@ -5,126 +5,136 @@ import android.view.View;
 import android.view.ViewGroup;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
+import de.robv.android.xposed.IXposedHookZygoteInit;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam;
 
-public class HookEntry implements IXposedHookLoadPackage {
+/**
+ * 拦截快手主进程，按设置界面保存的开关隐藏对应控件。
+ * 配置通过 XSharedPreferences 从模块自身私有目录读取
+ * （LSPosed 会把模块的 prefs 目录跨进程共享给宿主），
+ * 不能用宿主自己的 getSharedPreferences，因为那是两个不同沙盒。
+ */
+public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
-    private static final String TAG = "KwaiClean";
     private static final String TARGET = "com.smile.gifmaker";
 
-    // resource ids confirmed from kwai 14.10.10 reverse analysis
-    private static final int ID_FOLLOW_BTN = 0x7f091208;
-    private static final int ID_EMOTION_ROOT = 0x7f096496;
+    // 快手 14.10.10.51087 反编译得到的资源 id
+    private static final int ID_FOLLOW_BTN    = 0x7f091208;
+    private static final int ID_EMOTION_ROOT  = 0x7f096496;
     private static final int ID_EMOTION_COMMENT = 0x7f096493;
-    private static final int ID_EMOTION_LIKE = 0x7f096497;
+    private static final int ID_EMOTION_LIKE  = 0x7f096497;
     private static final int ID_EMOTION_SHARE = 0x7f09649a;
     private static final int ID_MUSIC_CONTAINER = 0x7f093005;
-    private static final int ID_MUSIC_TEXT = 0x7f093006;
+    private static final int ID_MUSIC_TEXT   = 0x7f093006;
+
+    private static String MODULE_PATH = null;
+
+    @Override
+    public void initZygote(StartupParam startupParam) throws Throwable {
+        MODULE_PATH = startupParam.modulePath;
+        XposedBridge.log("KwaiClean: initZygote, modulePath=" + MODULE_PATH);
+    }
 
     @Override
     public void handleLoadPackage(LoadPackageParam lpparam) throws Throwable {
-        if (lpparam == null) return;
-        if (!TARGET.equals(lpparam.packageName)) return;
-        XposedBridge.log(TAG + ": loaded in " + lpparam.processName);
+        if (lpparam == null || !TARGET.equals(lpparam.packageName)) return;
+
+        XposedBridge.log("KwaiClean: loaded in " + lpparam.processName);
+
+        // 第一层：Activity 显示后立刻扫一遍
         try {
             XposedHelpers.findAndHookMethod(Activity.class, "onResume", new XC_MethodHook() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    Object obj = param.thisObject;
-                    if (obj instanceof Activity) {
-                        applyTo((Activity) obj);
+                protected void afterHookedMethod(MethodHookParam param) {
+                    Object o = param.thisObject;
+                    if (o instanceof Activity) {
+                        scheduleApply((Activity) o, 0);
                     }
                 }
             });
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hook error " + t);
+            XposedBridge.log("KwaiClean: hook onResume error " + t);
+        }
+
+        // 第二层：任何 View 被加入布局时重新扫（列表滑动、切换视频都会触发）
+        try {
+            XposedHelpers.findAndHookMethod(ViewGroup.class, "addView",
+                    View.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    Object self = param.thisObject;
+                    if (self instanceof View) {
+                        View v = (View) self;
+                        Activity act = findActivity(v);
+                        if (act != null) {
+                            scheduleApply(act, 80);
+                        }
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            XposedBridge.log("KwaiClean: hook addView error " + t);
         }
     }
 
-    private static void applyTo(final Activity act) {
+    private static void scheduleApply(final Activity act, final long delay) {
         try {
-            final View root = act.getWindow().getDecorView();
+            final View root = act.getWindow() != null ? act.getWindow().getDecorView() : null;
             if (root == null) return;
-            root.post(new Runnable() {
+            root.postDelayed(new Runnable() {
                 @Override
                 public void run() {
                     try {
                         scan(act, root);
                     } catch (Throwable t) {
-                        XposedBridge.log(TAG + ": scan error " + t);
+                        XposedBridge.log("KwaiClean: scan error " + t);
                     }
                 }
-            });
+            }, delay);
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": apply error " + t);
+            XposedBridge.log("KwaiClean: apply error " + t);
         }
     }
 
     private static void scan(Activity act, View root) {
-        Prefs p = new Prefs(act);
-        if (!p.isOn(Prefs.MASTER_ENABLE)) return;
-        if (p.isOn(Prefs.HIDE_FOLLOW))   hideId(root, ID_FOLLOW_BTN);
-        if (p.isOn(Prefs.HIDE_EMOTION_BAR)) hideId(root, ID_EMOTION_ROOT);
-        if (p.isOn(Prefs.HIDE_LIKE))     hideId(root, ID_EMOTION_LIKE);
-        if (p.isOn(Prefs.HIDE_COMMENT))  hideId(root, ID_EMOTION_COMMENT);
-        if (p.isOn(Prefs.HIDE_SHARE))    hideId(root, ID_EMOTION_SHARE);
-        if (p.isOn(Prefs.HIDE_MUSIC)) {
+        Prefs p = Prefs.forHook(MODULE_PATH);
+        if (!p.get(Prefs.MASTER_ENABLE, true)) return;
+
+        if (p.get(Prefs.HIDE_FOLLOW, false))       hideId(root, ID_FOLLOW_BTN);
+        if (p.get(Prefs.HIDE_EMOTION_BAR, false))  hideId(root, ID_EMOTION_ROOT);
+        if (p.get(Prefs.HIDE_LIKE, false))         hideId(root, ID_EMOTION_LIKE);
+        if (p.get(Prefs.HIDE_COMMENT, false))      hideId(root, ID_EMOTION_COMMENT);
+        if (p.get(Prefs.HIDE_SHARE, false))        hideId(root, ID_EMOTION_SHARE);
+        if (p.get(Prefs.HIDE_MUSIC, false)) {
             hideId(root, ID_MUSIC_CONTAINER);
             hideId(root, ID_MUSIC_TEXT);
         }
-        if (p.isOn(Prefs.HIDE_NAVI))  hideByNaviHeuristic(root);
-        if (p.isOn(Prefs.HIDE_FAVORITE)) hideByFavoriteHeuristic(root);
-        if (p.isOn(Prefs.ADAPT_VIDEO)) { /* full screen area: handled by kwai itself */ }
+        if (p.get(Prefs.HIDE_NAVI, false))     hideByTag(root, "navi");
+        if (p.get(Prefs.HIDE_FAVORITE, false)) hideByTag(root, "favorite");
     }
 
-    private static void hideId(View root, int id) {
-        if (root == null) return;
-        if (root.getId() == id) {
-            root.setVisibility(View.GONE);
+    private static void hideId(View v, int id) {
+        if (v == null) return;
+        if (v.getId() == id) {
+            v.setVisibility(View.GONE);
             return;
         }
-        if (root instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) root;
-            int n = g.getChildCount();
-            for (int i = 0; i < n; i++) {
-                View c = g.getChildAt(i);
-                if (c != null) hideId(c, id);
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0, n = g.getChildCount(); i < n; i++) {
+                hideId(g.getChildAt(i), id);
             }
         }
     }
 
-    private static void hideByNaviHeuristic(View v) {
-        // fallback: hide clickable image buttons in the bottom navigation row
-        collectAndHide(v, new Matcher() {
-            @Override
-            public boolean match(View x) {
-                String d = describe(x);
-                return d != null && d.contains("navi");
-            }
-        });
-    }
-
-    private static void hideByFavoriteHeuristic(View v) {
-        collectAndHide(v, new Matcher() {
-            @Override
-            public boolean match(View x) {
-                String d = describe(x);
-                return d != null && d.contains("favorite");
-            }
-        });
-    }
-
-    private interface Matcher {
-        boolean match(View v);
-    }
-
-    private static void collectAndHide(View v, Matcher m) {
+    private static void hideByTag(View v, String needle) {
         if (v == null) return;
         try {
-            if (m.match(v)) {
+            String cls = v.getClass().getName();
+            if (cls != null && cls.toLowerCase().contains(needle)) {
                 v.setVisibility(View.GONE);
                 return;
             }
@@ -132,20 +142,22 @@ public class HookEntry implements IXposedHookLoadPackage {
         }
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
-            int n = g.getChildCount();
-            for (int i = 0; i < n; i++) {
-                collectAndHide(g.getChildAt(i), m);
+            for (int i = 0, n = g.getChildCount(); i < n; i++) {
+                hideByTag(g.getChildAt(i), needle);
             }
         }
     }
 
-    private static String describe(View v) {
+    private static Activity findActivity(View v) {
         try {
-            Object name = v.getClass().getName();
-            return name == null ? null : name.toString();
-        } catch (Throwable t) {
-            return null;
+            android.content.Context c = v.getContext();
+            while (c != null) {
+                if (c instanceof Activity) return (Activity) c;
+                if (!(c instanceof android.content.ContextWrapper)) return null;
+                c = ((android.content.ContextWrapper) c).getBaseContext();
+            }
+        } catch (Throwable ignored) {
         }
+        return null;
     }
-
 }
