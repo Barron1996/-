@@ -1,9 +1,9 @@
 package com.kwai.clean;
 
 import android.app.Activity;
-import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CompoundButton;
@@ -13,21 +13,21 @@ import android.widget.Switch;
 import android.widget.TextView;
 
 /**
- * Settings screen built entirely in code so the project needs no XML layouts
- * and no external UI dependency. One switch per feature, plus a master switch.
+ * 设置界面全部用代码构建，不依赖 XML 布局。
+ * 每个净化项一个独立开关，外加一个总开关。
  */
 public class SettingsActivity extends Activity {
 
-    private static final String[] LABELS = new String[] {
-            "Hide follow button",
-            "Hide like button",
-            "Hide comment button",
-            "Hide favorite button",
-            "Hide share button",
-            "Hide whole right interaction column",
-            "Hide background music bar",
-            "Hide bottom navigation bar",
-            "Adapt video to full screen"
+    private static final String[] LABELS = new String[]{
+            "隐藏关注按钮",
+            "隐藏点赞按钮",
+            "隐藏评论按钮",
+            "隐藏收藏按钮",
+            "隐藏分享按钮",
+            "隐藏整个右侧互动栏",
+            "隐藏背景音乐条",
+            "隐藏底部导航栏",
+            "视频全屏适配"
     };
 
     private Prefs prefs;
@@ -39,6 +39,7 @@ public class SettingsActivity extends Activity {
         prefs = new Prefs(this);
 
         ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(Color.parseColor("#FF101010"));
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(16);
@@ -46,30 +47,41 @@ public class SettingsActivity extends Activity {
         scroll.addView(root);
 
         TextView title = new TextView(this);
-        title.setText("Kwai Cleanup");
+        title.setText("快手净化");
         title.setTextSize(22f);
         title.setTextColor(Color.WHITE);
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("Scope: com.smile.gifmaker only. Turn features on, then restart Kuaishou.");
+        sub.setText("作用域：仅 com.smile.gifmaker。勾选开关后重启快手即可生效。");
         sub.setTextSize(12f);
         sub.setTextColor(Color.parseColor("#9E9E9E"));
         sub.setPadding(0, dp(6), 0, dp(14));
         root.addView(sub);
 
-        addSwitch(root, Prefs.MASTER_ENABLE, "Master switch");
+        addSwitch(root, Prefs.MASTER_ENABLE, "总开关");
         addDivider(root);
+
         for (int i = 0; i < Prefs.FEATURE_KEYS.length; i++) {
-            addSwitch(root, Prefs.FEATURE_KEYS[i], LABELS[i]);
+            String label = i < LABELS.length ? LABELS[i] : Prefs.FEATURE_KEYS[i];
+            addSwitch(root, Prefs.FEATURE_KEYS[i], label);
         }
+
+        addDivider(root);
 
         status = new TextView(this);
         status.setTextSize(12f);
         status.setTextColor(Color.parseColor("#4CAF50"));
-        status.setPadding(0, dp(16), 0, 0);
-        status.setText("Changes take effect after restarting Kuaishou.");
+        status.setPadding(0, dp(12), 0, 0);
+        status.setText("设置已自动保存。修改后请强行停止并重新打开快手。");
         root.addView(status);
+
+        TextView hint = new TextView(this);
+        hint.setTextSize(11f);
+        hint.setTextColor(Color.parseColor("#666666"));
+        hint.setPadding(0, dp(18), 0, 0);
+        hint.setText("提示：本模块依赖 LSPosed 注入。若修改后仍无效果，请确认已在 LSPosed 中启用本模块、作用域勾选了快手，并重启一次手机让 Zygisk 重新加载模块。");
+        root.addView(hint);
 
         setContentView(scroll);
     }
@@ -87,7 +99,7 @@ public class SettingsActivity extends Activity {
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
                 prefs.set(key, isChecked);
                 if (status != null) {
-                    status.setText("Saved. Restart Kuaishou to apply.");
+                    status.setText("已保存：" + (isChecked ? "开启" : "关闭") + "。重启快手后生效。");
                 }
             }
         });
@@ -108,5 +120,4 @@ public class SettingsActivity extends Activity {
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
     }
-
 }
