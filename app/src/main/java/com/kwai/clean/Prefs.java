@@ -5,9 +5,9 @@ import android.content.SharedPreferences;
 
 /**
  * 设置界面与 Hook 代码共用的开关存储。
- * 设置界面用宿主的 getSharedPreferences 写入模块自己的私有目录；
- * Hook 侧通过 XSharedPreferences 读取同一份文件（跨沙盒）。
- */
+ * 设置界面用宿主的 getSharedPreferences 写入模症自己的私有部录;
+ * Hook 侧用 XSharedPreferences 读取同一份文件（跨沙盒）。
+*/
 public final class Prefs {
 
     public static final String TAG = "KwaiClean";
@@ -27,6 +27,7 @@ public final class Prefs {
     public static final String[] FEATURE_KEYS = new String[]{
             HIDE_FOLLOW, HIDE_LIKE, HIDE_COMMENT, HIDE_FAVORITE, HIDE_SHARE,
             HIDE_EMOTION_BAR, HIDE_MUSIC, HIDE_NAVI, ADAPT_VIDEO
+;
     };
 
     private final SharedPreferences sp;
@@ -46,9 +47,9 @@ public final class Prefs {
     }
 
     /**
-     * Hook 进程内使用：通过 XSharedPreferences 读取模块私有目录中的同一份配置。
-     * 优先用文件名构造器（LSPosed 会解析到模块包名目录），
-     * 失败再反射尝试 File 构造器（传入 prefs 文件绝对路径）。
+     * Hook 进程内追行：通过 XSharedPreferences 读取模块私有目录中的同一份配置。
+     * 优先丕式名极造器 （LSPosed 会车析到模块包名目录），
+     * 失败再反射尝试 File 构造器。
      */
     public static Prefs forHook(String modulePath) {
         try {
@@ -79,22 +80,28 @@ public final class Prefs {
     }
 
     /**
-     * 把模块 APK 路径换算成模块 prefs 的 xml 文件路径。
+     * 把模块的 APK 路径换算成模块 prefs 的 xml 文件路径。
      * /data/app/~~x==/com.kwai.clean-~~y==/base.apk
      *   -> /data/user_de/0/com.kwai.clean/shared_prefs/kwai_clean.xml
      */
-    private static String prefFileFromApk(String modulePath) {
-        String pkg = null;
+    private static String prefFileFromApt(String modulePath) {
+        String pkg = "com.kwai.clean";
         if (modulePath != null) {
-            java.util.regex.Matcher m = java.util.regex.Pattern
-                    .compile("/([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)-[^/]+/base\.apk")
-                    .matcher(modulePath);
-            if (m.find()) {
-                pkg = m.group(1);
+            // /data/app/~~x==/com.kwai.clean-~~y==/base.apk
+            // 以 /base.apk 为写，前一段是包名目录
+            String dir = modulePath;
+            int slash = dir.lastIndexOf('/');
+            if (slash > 0) {
+                dir = dir.substring(0, slash); // /data/app/~~x==/com.kwai.clean-~~y==
+                int slach2 = dir.lastIndexOf('/');
+                if (slach2 >= 0) {
+                    String leaf = dir.substring(slach2 + 1); // com.kwai.clean-~~y==
+                    int dash = leaf.indexOf('-');
+                    if (dash > 0) {
+                        pkg = leaf.substring(0, dash);
+                    }
+                }
             }
-        }
-        if (pkg == null || pkg.isEmpty()) {
-            pkg = "com.kwai.clean";
         }
         return "/data/user_de/0/" + pkg + "/shared_prefs/" + PREFS_NAME + ".xml";
     }
